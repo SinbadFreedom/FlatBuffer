@@ -16,16 +16,16 @@
 
 package com.google.flatbuffers;
 
-import static com.google.flatbuffers.Constants.*;
-
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
 import java.nio.charset.CoderResult;
 import java.util.Arrays;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.charset.Charset;
+
+import static com.google.flatbuffers.Constants.*;
 
 /// @file
 /// @addtogroup flatbuffers_java_api
@@ -36,10 +36,10 @@ import java.nio.charset.Charset;
  * "Use in Java/C#" in the main FlatBuffers documentation.
  */
 public class FlatBufferBuilder {
+    static final Charset utf8charset = Charset.forName("UTF-8"); // The UTF-8 character set used by FlatBuffers.
     /// @cond FLATBUFFERS_INTERNAL
     ByteBuffer bb;                  // Where we construct the FlatBuffer.
     int space;                      // Remaining space in the ByteBuffer.
-    static final Charset utf8charset = Charset.forName("UTF-8"); // The UTF-8 character set used by FlatBuffers.
     int minalign = 1;               // Minimum alignment encountered so far.
     int[] vtable = null;            // The vtable for the current table.
     int vtable_in_use = 0;          // The amount of fields we're actually using.
@@ -54,20 +54,20 @@ public class FlatBufferBuilder {
     ByteBuffer dst;
     /// @endcond
 
-   /**
-    * Start with a buffer of size `initial_size`, then grow as required.
-    *
-    * @param initial_size The initial size of the internal buffer to use.
-    */
+    /**
+     * Start with a buffer of size `initial_size`, then grow as required.
+     *
+     * @param initial_size The initial size of the internal buffer to use.
+     */
     public FlatBufferBuilder(int initial_size) {
         if (initial_size <= 0) initial_size = 1;
         space = initial_size;
         bb = newByteBuffer(initial_size);
     }
 
-   /**
-    * Start with a buffer of 1KiB, then grow as required.
-    */
+    /**
+     * Start with a buffer of 1KiB, then grow as required.
+     */
     public FlatBufferBuilder() {
         this(1024);
     }
@@ -84,6 +84,40 @@ public class FlatBufferBuilder {
     }
 
     /**
+     * Create a `ByteBuffer` with a given capacity.
+     *
+     * @param capacity The size of the `ByteBuffer` to allocate.
+     * @return Returns the new `ByteBuffer` that was allocated.
+     */
+    static ByteBuffer newByteBuffer(int capacity) {
+        ByteBuffer newbb = ByteBuffer.allocate(capacity);
+        newbb.order(ByteOrder.LITTLE_ENDIAN);
+        return newbb;
+    }
+
+    /// @cond FLATBUFFERS_INTERNAL
+
+    /**
+     * Doubles the size of the backing {@link ByteBuffer} and copies the old data towards the
+     * end of the new buffer (since we build the buffer backwards).
+     *
+     * @param bb The current buffer with the existing data.
+     * @return A new byte buffer with the old data copied copied to it.  The data is
+     * located at the end of the buffer.
+     */
+    static ByteBuffer growByteBuffer(ByteBuffer bb) throws Exception {
+        int old_buf_size = bb.capacity();
+        if ((old_buf_size & 0xC0000000) != 0)  // Ensure we don't grow beyond what fits in an int.
+            throw new Exception("FlatBuffers: cannot grow buffer beyond 2 gigabytes.");
+        int new_buf_size = old_buf_size << 1;
+        bb.position(0);
+        ByteBuffer nbb = newByteBuffer(new_buf_size);
+        nbb.position(new_buf_size - old_buf_size);
+        nbb.put(bb);
+        return nbb;
+    }
+
+    /**
      * Alternative initializer that allows reusing this object on an existing
      * `ByteBuffer`. This method resets the builder's internal state, but keeps
      * objects that have been allocated for temporary storage.
@@ -91,7 +125,7 @@ public class FlatBufferBuilder {
      * @param existing_bb The byte buffer to reuse.
      * @return Returns `this`.
      */
-    public FlatBufferBuilder init(ByteBuffer existing_bb){
+    public FlatBufferBuilder init(ByteBuffer existing_bb) {
         bb = existing_bb;
         bb.clear();
         bb.order(ByteOrder.LITTLE_ENDIAN);
@@ -106,68 +140,35 @@ public class FlatBufferBuilder {
         return this;
     }
 
-    /// @cond FLATBUFFERS_INTERNAL
     /**
-     * Create a `ByteBuffer` with a given capacity.
+     * Offset relative to the end of the buffer.
      *
-     * @param capacity The size of the `ByteBuffer` to allocate.
-     * @return Returns the new `ByteBuffer` that was allocated.
+     * @return Offset relative to the end of the buffer.
      */
-    static ByteBuffer newByteBuffer(int capacity) {
-        ByteBuffer newbb = ByteBuffer.allocate(capacity);
-        newbb.order(ByteOrder.LITTLE_ENDIAN);
-        return newbb;
-    }
-
-    /**
-     * Doubles the size of the backing {@link ByteBuffer} and copies the old data towards the
-     * end of the new buffer (since we build the buffer backwards).
-     *
-     * @param bb The current buffer with the existing data.
-     * @return A new byte buffer with the old data copied copied to it.  The data is
-     * located at the end of the buffer.
-     */
-    static ByteBuffer growByteBuffer(ByteBuffer bb) {
-        int old_buf_size = bb.capacity();
-        if ((old_buf_size & 0xC0000000) != 0)  // Ensure we don't grow beyond what fits in an int.
-            throw new AssertionError("FlatBuffers: cannot grow buffer beyond 2 gigabytes.");
-        int new_buf_size = old_buf_size << 1;
-        bb.position(0);
-        ByteBuffer nbb = newByteBuffer(new_buf_size);
-        nbb.position(new_buf_size - old_buf_size);
-        nbb.put(bb);
-        return nbb;
-    }
-
-   /**
-    * Offset relative to the end of the buffer.
-    *
-    * @return Offset relative to the end of the buffer.
-    */
     public int offset() {
         return bb.capacity() - space;
     }
 
-   /**
-    * Add zero valued bytes to prepare a new entry to be added.
-    *
-    * @param byte_size Number of bytes to add.
-    */
+    /**
+     * Add zero valued bytes to prepare a new entry to be added.
+     *
+     * @param byte_size Number of bytes to add.
+     */
     public void pad(int byte_size) {
-        for (int i = 0; i < byte_size; i++) bb.put(--space, (byte)0);
+        for (int i = 0; i < byte_size; i++) bb.put(--space, (byte) 0);
     }
 
-   /**
-    * Prepare to write an element of `size` after `additional_bytes`
-    * have been written, e.g. if you write a string, you need to align such
-    * the int length field is aligned to {@link com.google.flatbuffers.Constants#SIZEOF_INT}, and
-    * the string data follows it directly.  If all you need to do is alignment, `additional_bytes`
-    * will be 0.
-    *
-    * @param size This is the of the new element to write.
-    * @param additional_bytes The padding size.
-    */
-    public void prep(int size, int additional_bytes) {
+    /**
+     * Prepare to write an element of `size` after `additional_bytes`
+     * have been written, e.g. if you write a string, you need to align such
+     * the int length field is aligned to {@link Constants#SIZEOF_INT}, and
+     * the string data follows it directly.  If all you need to do is alignment, `additional_bytes`
+     * will be 0.
+     *
+     * @param size             This is the of the new element to write.
+     * @param additional_bytes The padding size.
+     */
+    public void prep(int size, int additional_bytes) throws Exception {
         // Track the biggest thing we've ever aligned to.
         if (size > minalign) minalign = size;
         // Find the amount of alignment needed such that `size` is properly
@@ -188,7 +189,9 @@ public class FlatBufferBuilder {
      *
      * @param x A `boolean` to put into the buffer.
      */
-    public void putBoolean(boolean x) { bb.put      (space -= Constants.SIZEOF_BYTE, (byte)(x ? 1 : 0)); }
+    public void putBoolean(boolean x) {
+        bb.put(space -= Constants.SIZEOF_BYTE, (byte) (x ? 1 : 0));
+    }
 
     /**
      * Add a `byte` to the buffer, backwards from the current location. Doesn't align nor
@@ -196,7 +199,9 @@ public class FlatBufferBuilder {
      *
      * @param x A `byte` to put into the buffer.
      */
-    public void putByte   (byte    x) { bb.put      (space -= Constants.SIZEOF_BYTE, x); }
+    public void putByte(byte x) {
+        bb.put(space -= Constants.SIZEOF_BYTE, x);
+    }
 
     /**
      * Add a `short` to the buffer, backwards from the current location. Doesn't align nor
@@ -204,7 +209,9 @@ public class FlatBufferBuilder {
      *
      * @param x A `short` to put into the buffer.
      */
-    public void putShort  (short   x) { bb.putShort (space -= Constants.SIZEOF_SHORT, x); }
+    public void putShort(short x) {
+        bb.putShort(space -= Constants.SIZEOF_SHORT, x);
+    }
 
     /**
      * Add an `int` to the buffer, backwards from the current location. Doesn't align nor
@@ -212,7 +219,9 @@ public class FlatBufferBuilder {
      *
      * @param x An `int` to put into the buffer.
      */
-    public void putInt    (int     x) { bb.putInt   (space -= Constants.SIZEOF_INT, x); }
+    public void putInt(int x) {
+        bb.putInt(space -= Constants.SIZEOF_INT, x);
+    }
 
     /**
      * Add a `long` to the buffer, backwards from the current location. Doesn't align nor
@@ -220,7 +229,9 @@ public class FlatBufferBuilder {
      *
      * @param x A `long` to put into the buffer.
      */
-    public void putLong   (long    x) { bb.putLong  (space -= Constants.SIZEOF_LONG, x); }
+    public void putLong(long x) {
+        bb.putLong(space -= Constants.SIZEOF_LONG, x);
+    }
 
     /**
      * Add a `float` to the buffer, backwards from the current location. Doesn't align nor
@@ -228,7 +239,9 @@ public class FlatBufferBuilder {
      *
      * @param x A `float` to put into the buffer.
      */
-    public void putFloat  (float   x) { bb.putFloat (space -= Constants.SIZEOF_FLOAT, x); }
+    public void putFloat(float x) {
+        bb.putFloat(space -= Constants.SIZEOF_FLOAT, x);
+    }
 
     /**
      * Add a `double` to the buffer, backwards from the current location. Doesn't align nor
@@ -236,7 +249,9 @@ public class FlatBufferBuilder {
      *
      * @param x A `double` to put into the buffer.
      */
-    public void putDouble (double  x) { bb.putDouble(space -= Constants.SIZEOF_DOUBLE, x); }
+    public void putDouble(double x) {
+        bb.putDouble(space -= Constants.SIZEOF_DOUBLE, x);
+    }
     /// @endcond
 
     /**
@@ -244,106 +259,128 @@ public class FlatBufferBuilder {
      *
      * @param x A `boolean` to put into the buffer.
      */
-    public void addBoolean(boolean x) { prep(Constants.SIZEOF_BYTE, 0); putBoolean(x); }
+    public void addBoolean(boolean x) throws Exception {
+        prep(Constants.SIZEOF_BYTE, 0);
+        putBoolean(x);
+    }
 
     /**
      * Add a `byte` to the buffer, properly aligned, and grows the buffer (if necessary).
      *
      * @param x A `byte` to put into the buffer.
      */
-    public void addByte   (byte    x) { prep(Constants.SIZEOF_BYTE, 0); putByte   (x); }
+    public void addByte(byte x) throws Exception {
+        prep(Constants.SIZEOF_BYTE, 0);
+        putByte(x);
+    }
 
     /**
      * Add a `short` to the buffer, properly aligned, and grows the buffer (if necessary).
      *
      * @param x A `short` to put into the buffer.
      */
-    public void addShort  (short   x) { prep(Constants.SIZEOF_SHORT, 0); putShort  (x); }
+    public void addShort(short x) throws Exception {
+        prep(Constants.SIZEOF_SHORT, 0);
+        putShort(x);
+    }
 
     /**
      * Add an `int` to the buffer, properly aligned, and grows the buffer (if necessary).
      *
      * @param x An `int` to put into the buffer.
      */
-    public void addInt    (int     x) { prep(Constants.SIZEOF_INT, 0); putInt    (x); }
+    public void addInt(int x) throws Exception {
+        prep(Constants.SIZEOF_INT, 0);
+        putInt(x);
+    }
 
     /**
      * Add a `long` to the buffer, properly aligned, and grows the buffer (if necessary).
      *
      * @param x A `long` to put into the buffer.
      */
-    public void addLong   (long    x) { prep(Constants.SIZEOF_LONG, 0); putLong   (x); }
+    public void addLong(long x) throws Exception {
+        prep(Constants.SIZEOF_LONG, 0);
+        putLong(x);
+    }
 
     /**
      * Add a `float` to the buffer, properly aligned, and grows the buffer (if necessary).
      *
      * @param x A `float` to put into the buffer.
      */
-    public void addFloat  (float   x) { prep(Constants.SIZEOF_FLOAT, 0); putFloat  (x); }
+    public void addFloat(float x) throws Exception {
+        prep(Constants.SIZEOF_FLOAT, 0);
+        putFloat(x);
+    }
 
     /**
      * Add a `double` to the buffer, properly aligned, and grows the buffer (if necessary).
      *
      * @param x A `double` to put into the buffer.
      */
-    public void addDouble (double  x) { prep(Constants.SIZEOF_DOUBLE, 0); putDouble (x); }
+    public void addDouble(double x) throws Exception {
+        prep(Constants.SIZEOF_DOUBLE, 0);
+        putDouble(x);
+    }
 
-   /**
-    * Adds on offset, relative to where it will be written.
-    *
-    * @param off The offset to add.
-    */
-    public void addOffset(int off) {
+    /**
+     * Adds on offset, relative to where it will be written.
+     *
+     * @param off The offset to add.
+     */
+    public void addOffset(int off) throws Exception {
         prep(SIZEOF_INT, 0);  // Ensure alignment is already done.
         assert off <= offset();
         off = offset() - off + SIZEOF_INT;
         putInt(off);
     }
 
-   /// @cond FLATBUFFERS_INTERNAL
-   /**
-    * Start a new array/vector of objects.  Users usually will not call
-    * this directly.  The `FlatBuffers` compiler will create a start/end
-    * method for vector types in generated code.
-    * <p>
-    * The expected sequence of calls is:
-    * <ol>
-    * <li>Start the array using this method.</li>
-    * <li>Call {@link #addOffset(int)} `num_elems` number of times to set
-    * the offset of each element in the array.</li>
-    * <li>Call {@link #endVector()} to retrieve the offset of the array.</li>
-    * </ol>
-    * <p>
-    * For example, to create an array of strings, do:
-    * <pre>{@code
-    * // Need 10 strings
-    * FlatBufferBuilder builder = new FlatBufferBuilder(existingBuffer);
-    * int[] offsets = new int[10];
-    *
-    * for (int i = 0; i < 10; i++) {
-    *   offsets[i] = fbb.createString(" " + i);
-    * }
-    *
-    * // Have the strings in the buffer, but don't have a vector.
-    * // Add a vector that references the newly created strings:
-    * builder.startVector(4, offsets.length, 4);
-    *
-    * // Add each string to the newly created vector
-    * // The strings are added in reverse order since the buffer
-    * // is filled in back to front
-    * for (int i = offsets.length - 1; i >= 0; i--) {
-    *   builder.addOffset(offsets[i]);
-    * }
-    *
-    * // Finish off the vector
-    * int offsetOfTheVector = fbb.endVector();
-    * }</pre>
-    *
-    * @param elem_size The size of each element in the array.
-    * @param num_elems The number of elements in the array.
-    * @param alignment The alignment of the array.
-    */
-    public void startVector(int elem_size, int num_elems, int alignment) {
+    /// @cond FLATBUFFERS_INTERNAL
+
+    /**
+     * Start a new array/vector of objects.  Users usually will not call
+     * this directly.  The `FlatBuffers` compiler will create a start/end
+     * method for vector types in generated code.
+     * <p>
+     * The expected sequence of calls is:
+     * <ol>
+     * <li>Start the array using this method.</li>
+     * <li>Call {@link #addOffset(int)} `num_elems` number of times to set
+     * the offset of each element in the array.</li>
+     * <li>Call {@link #endVector()} to retrieve the offset of the array.</li>
+     * </ol>
+     * <p>
+     * For example, to create an array of strings, do:
+     * <pre>{@code
+     * // Need 10 strings
+     * FlatBufferBuilder builder = new FlatBufferBuilder(existingBuffer);
+     * int[] offsets = new int[10];
+     *
+     * for (int i = 0; i < 10; i++) {
+     *   offsets[i] = fbb.createString(" " + i);
+     * }
+     *
+     * // Have the strings in the buffer, but don't have a vector.
+     * // Add a vector that references the newly created strings:
+     * builder.startVector(4, offsets.length, 4);
+     *
+     * // Add each string to the newly created vector
+     * // The strings are added in reverse order since the buffer
+     * // is filled in back to front
+     * for (int i = offsets.length - 1; i >= 0; i--) {
+     *   builder.addOffset(offsets[i]);
+     * }
+     *
+     * // Finish off the vector
+     * int offsetOfTheVector = fbb.endVector();
+     * }</pre>
+     *
+     * @param elem_size The size of each element in the array.
+     * @param num_elems The number of elements in the array.
+     * @param alignment The alignment of the array.
+     */
+    public void startVector(int elem_size, int num_elems, int alignment) throws Exception {
         notNested();
         vector_num_elems = num_elems;
         prep(SIZEOF_INT, elem_size * num_elems);
@@ -351,16 +388,16 @@ public class FlatBufferBuilder {
         nested = true;
     }
 
-   /**
-    * Finish off the creation of an array and all its elements.  The array
-    * must be created with {@link #startVector(int, int, int)}.
-    *
-    * @return The offset at which the newly created array starts.
-    * @see #startVector(int, int, int)
-    */
-    public int endVector() {
+    /**
+     * Finish off the creation of an array and all its elements.  The array
+     * must be created with {@link #startVector(int, int, int)}.
+     *
+     * @return The offset at which the newly created array starts.
+     * @see #startVector(int, int, int)
+     */
+    public int endVector() throws Exception {
         if (!nested)
-            throw new AssertionError("FlatBuffers: endVector called without startVector");
+            throw new Exception("FlatBuffers: endVector called without startVector");
         nested = false;
         putInt(vector_num_elems);
         return offset();
@@ -377,7 +414,7 @@ public class FlatBufferBuilder {
      * @param alignment byte alignment.
      * @return ByteBuffer with position and limit set to the space allocated for the array.
      */
-    public ByteBuffer createUnintializedVector(int elem_size, int num_elems, int alignment) {
+    public ByteBuffer createUnintializedVector(int elem_size, int num_elems, int alignment) throws Exception {
         int length = elem_size * num_elems;
         startVector(elem_size, num_elems, alignment);
 
@@ -389,39 +426,39 @@ public class FlatBufferBuilder {
         return copy;
     }
 
-   /**
+    /**
      * Create a vector of tables.
      *
      * @param offsets Offsets of the tables.
      * @return Returns offset of the vector.
      */
-    public int createVectorOfTables(int[] offsets) {
+    public int createVectorOfTables(int[] offsets) throws Exception {
         notNested();
         startVector(Constants.SIZEOF_INT, offsets.length, Constants.SIZEOF_INT);
-        for(int i = offsets.length - 1; i >= 0; i--) addOffset(offsets[i]);
+        for (int i = offsets.length - 1; i >= 0; i--) addOffset(offsets[i]);
         return endVector();
     }
 
     /**
      * Create a vector of sorted by the key tables.
      *
-     * @param obj Instance of the table subclass.
+     * @param obj     Instance of the table subclass.
      * @param offsets Offsets of the tables.
      * @return Returns offset of the sorted vector.
      */
-    public <T extends Table> int createSortedVectorOfTables(T obj, int[] offsets) {
+    public <T extends Table> int createSortedVectorOfTables(T obj, int[] offsets) throws Exception {
         obj.sortTables(offsets, bb);
         return createVectorOfTables(offsets);
     }
-	
-   /**
-    * Encode the string `s` in the buffer using UTF-8.  If {@code s} is
-    * already a {@link CharBuffer}, this method is allocation free.
-    *
-    * @param s The string to encode.
-    * @return The offset in the buffer where the encoded string starts.
-    */
-    public int createString(CharSequence s) {
+
+    /**
+     * Encode the string `s` in the buffer using UTF-8.  If {@code s} is
+     * already a {@link CharBuffer}, this method is allocation free.
+     *
+     * @param s The string to encode.
+     * @return The offset in the buffer where the encoded string starts.
+     */
+    public int createString(CharSequence s) throws Exception {
         int length = s.length();
         int estimatedDstCapacity = (int) (length * encoder.maxBytesPerChar());
         if (dst == null || dst.capacity() < estimatedDstCapacity) {
@@ -431,7 +468,7 @@ public class FlatBufferBuilder {
         dst.clear();
 
         CharBuffer src = s instanceof CharBuffer ? (CharBuffer) s :
-            CharBuffer.wrap(s);
+                CharBuffer.wrap(s);
         CoderResult result = encoder.encode(src, dst, true);
         if (result.isError()) {
             try {
@@ -445,15 +482,15 @@ public class FlatBufferBuilder {
         return createString(dst);
     }
 
-   /**
-    * Create a string in the buffer from an already encoded UTF-8 string in a ByteBuffer.
-    *
-    * @param s An already encoded UTF-8 string as a `ByteBuffer`.
-    * @return The offset in the buffer where the encoded string starts.
-    */
-    public int createString(ByteBuffer s) {
+    /**
+     * Create a string in the buffer from an already encoded UTF-8 string in a ByteBuffer.
+     *
+     * @param s An already encoded UTF-8 string as a `ByteBuffer`.
+     * @return The offset in the buffer where the encoded string starts.
+     */
+    public int createString(ByteBuffer s) throws Exception {
         int length = s.remaining();
-        addByte((byte)0);
+        addByte((byte) 0);
         startVector(1, length, 1);
         bb.position(space -= length);
         bb.put(s);
@@ -466,7 +503,7 @@ public class FlatBufferBuilder {
      * @param arr A source array with data
      * @return The offset in the buffer where the encoded array starts.
      */
-    public int createByteVector(byte[] arr) {
+    public int createByteVector(byte[] arr) throws Exception {
         int length = arr.length;
         startVector(1, length, 1);
         bb.position(space -= length);
@@ -474,79 +511,80 @@ public class FlatBufferBuilder {
         return endVector();
     }
 
-   /// @cond FLATBUFFERS_INTERNAL
-   /**
-    * Should not be accessing the final buffer before it is finished.
-    */
-    public void finished() {
+    /// @cond FLATBUFFERS_INTERNAL
+
+    /**
+     * Should not be accessing the final buffer before it is finished.
+     */
+    public void finished() throws Exception {
         if (!finished)
-            throw new AssertionError(
-                "FlatBuffers: you can only access the serialized buffer after it has been" +
-                " finished by FlatBufferBuilder.finish().");
+            throw new Exception(
+                    "FlatBuffers: you can only access the serialized buffer after it has been" +
+                            " finished by FlatBufferBuilder.finish().");
     }
 
-   /**
-    * Should not be creating any other object, string or vector
-    * while an object is being constructed.
-    */
-    public void notNested() {
+    /**
+     * Should not be creating any other object, string or vector
+     * while an object is being constructed.
+     */
+    public void notNested() throws Exception {
         if (nested)
-            throw new AssertionError("FlatBuffers: object serialization must not be nested.");
+            throw new Exception("FlatBuffers: object serialization must not be nested.");
     }
 
-   /**
-    * Structures are always stored inline, they need to be created right
-    * where they're used.  You'll get this assertion failure if you
-    * created it elsewhere.
-    *
-    * @param obj The offset of the created object.
-    */
-    public void Nested(int obj) {
+    /**
+     * Structures are always stored inline, they need to be created right
+     * where they're used.  You'll get this assertion failure if you
+     * created it elsewhere.
+     *
+     * @param obj The offset of the created object.
+     */
+    public void Nested(int obj) throws Exception {
         if (obj != offset())
-            throw new AssertionError("FlatBuffers: struct must be serialized inline.");
+            throw new Exception("FlatBuffers: struct must be serialized inline.");
     }
 
-   /**
-    * Start encoding a new object in the buffer.  Users will not usually need to
-    * call this directly. The `FlatBuffers` compiler will generate helper methods
-    * that call this method internally.
-    * <p>
-    * For example, using the "Monster" code found on the "landing page". An
-    * object of type `Monster` can be created using the following code:
-    *
-    * <pre>{@code
-    * int testArrayOfString = Monster.createTestarrayofstringVector(fbb, new int[] {
-    *   fbb.createString("test1"),
-    *   fbb.createString("test2")
-    * });
-    *
-    * Monster.startMonster(fbb);
-    * Monster.addPos(fbb, Vec3.createVec3(fbb, 1.0f, 2.0f, 3.0f, 3.0,
-    *   Color.Green, (short)5, (byte)6));
-    * Monster.addHp(fbb, (short)80);
-    * Monster.addName(fbb, str);
-    * Monster.addInventory(fbb, inv);
-    * Monster.addTestType(fbb, (byte)Any.Monster);
-    * Monster.addTest(fbb, mon2);
-    * Monster.addTest4(fbb, test4);
-    * Monster.addTestarrayofstring(fbb, testArrayOfString);
-    * int mon = Monster.endMonster(fbb);
-    * }</pre>
-    * <p>
-    * Here:
-    * <ul>
-    * <li>The call to `Monster#startMonster(FlatBufferBuilder)` will call this
-    * method with the right number of fields set.</li>
-    * <li>`Monster#endMonster(FlatBufferBuilder)` will ensure {@link #endObject()} is called.</li>
-    * </ul>
-    * <p>
-    * It's not recommended to call this method directly.  If it's called manually, you must ensure
-    * to audit all calls to it whenever fields are added or removed from your schema.  This is
-    * automatically done by the code generated by the `FlatBuffers` compiler.
-    *
-    * @param numfields The number of fields found in this object.
-    */
-    public void startObject(int numfields) {
+    /**
+     * Start encoding a new object in the buffer.  Users will not usually need to
+     * call this directly. The `FlatBuffers` compiler will generate helper methods
+     * that call this method internally.
+     * <p>
+     * For example, using the "Monster" code found on the "landing page". An
+     * object of type `Monster` can be created using the following code:
+     *
+     * <pre>{@code
+     * int testArrayOfString = Monster.createTestarrayofstringVector(fbb, new int[] {
+     *   fbb.createString("test1"),
+     *   fbb.createString("test2")
+     * });
+     *
+     * Monster.startMonster(fbb);
+     * Monster.addPos(fbb, Vec3.createVec3(fbb, 1.0f, 2.0f, 3.0f, 3.0,
+     *   Color.Green, (short)5, (byte)6));
+     * Monster.addHp(fbb, (short)80);
+     * Monster.addName(fbb, str);
+     * Monster.addInventory(fbb, inv);
+     * Monster.addTestType(fbb, (byte)Any.Monster);
+     * Monster.addTest(fbb, mon2);
+     * Monster.addTest4(fbb, test4);
+     * Monster.addTestarrayofstring(fbb, testArrayOfString);
+     * int mon = Monster.endMonster(fbb);
+     * }</pre>
+     * <p>
+     * Here:
+     * <ul>
+     * <li>The call to `Monster#startMonster(FlatBufferBuilder)` will call this
+     * method with the right number of fields set.</li>
+     * <li>`Monster#endMonster(FlatBufferBuilder)` will ensure {@link #endObject()} is called.</li>
+     * </ul>
+     * <p>
+     * It's not recommended to call this method directly.  If it's called manually, you must ensure
+     * to audit all calls to it whenever fields are added or removed from your schema.  This is
+     * automatically done by the code generated by the `FlatBuffers` compiler.
+     *
+     * @param numfields The number of fields found in this object.
+     */
+    public void startObject(int numfields) throws Exception {
         notNested();
         if (vtable == null || vtable.length < numfields) vtable = new int[numfields];
         vtable_in_use = numfields;
@@ -560,98 +598,138 @@ public class FlatBufferBuilder {
      *
      * @param o The index into the vtable.
      * @param x A `boolean` to put into the buffer, depending on how defaults are handled. If
-     * `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
-     * default value, it can be skipped.
+     *          `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
+     *          default value, it can be skipped.
      * @param d A `boolean` default value to compare against when `force_defaults` is `false`.
      */
-    public void addBoolean(int o, boolean x, boolean d) { if(force_defaults || x != d) { addBoolean(x); slot(o); } }
+    public void addBoolean(int o, boolean x, boolean d) throws Exception {
+        if (force_defaults || x != d) {
+            addBoolean(x);
+            slot(o);
+        }
+    }
 
     /**
      * Add a `byte` to a table at `o` into its vtable, with value `x` and default `d`.
      *
      * @param o The index into the vtable.
      * @param x A `byte` to put into the buffer, depending on how defaults are handled. If
-     * `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
-     * default value, it can be skipped.
+     *          `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
+     *          default value, it can be skipped.
      * @param d A `byte` default value to compare against when `force_defaults` is `false`.
      */
-    public void addByte   (int o, byte    x, int     d) { if(force_defaults || x != d) { addByte   (x); slot(o); } }
+    public void addByte(int o, byte x, int d) throws Exception {
+        if (force_defaults || x != d) {
+            addByte(x);
+            slot(o);
+        }
+    }
 
     /**
      * Add a `short` to a table at `o` into its vtable, with value `x` and default `d`.
      *
      * @param o The index into the vtable.
      * @param x A `short` to put into the buffer, depending on how defaults are handled. If
-     * `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
-     * default value, it can be skipped.
+     *          `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
+     *          default value, it can be skipped.
      * @param d A `short` default value to compare against when `force_defaults` is `false`.
      */
-    public void addShort  (int o, short   x, int     d) { if(force_defaults || x != d) { addShort  (x); slot(o); } }
+    public void addShort(int o, short x, int d) throws Exception {
+        if (force_defaults || x != d) {
+            addShort(x);
+            slot(o);
+        }
+    }
 
     /**
      * Add an `int` to a table at `o` into its vtable, with value `x` and default `d`.
      *
      * @param o The index into the vtable.
      * @param x An `int` to put into the buffer, depending on how defaults are handled. If
-     * `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
-     * default value, it can be skipped.
+     *          `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
+     *          default value, it can be skipped.
      * @param d An `int` default value to compare against when `force_defaults` is `false`.
      */
-    public void addInt    (int o, int     x, int     d) { if(force_defaults || x != d) { addInt    (x); slot(o); } }
+    public void addInt(int o, int x, int d) throws Exception {
+        if (force_defaults || x != d) {
+            addInt(x);
+            slot(o);
+        }
+    }
 
     /**
      * Add a `long` to a table at `o` into its vtable, with value `x` and default `d`.
      *
      * @param o The index into the vtable.
      * @param x A `long` to put into the buffer, depending on how defaults are handled. If
-     * `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
-     * default value, it can be skipped.
+     *          `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
+     *          default value, it can be skipped.
      * @param d A `long` default value to compare against when `force_defaults` is `false`.
      */
-    public void addLong   (int o, long    x, long    d) { if(force_defaults || x != d) { addLong   (x); slot(o); } }
+    public void addLong(int o, long x, long d) throws Exception {
+        if (force_defaults || x != d) {
+            addLong(x);
+            slot(o);
+        }
+    }
 
     /**
      * Add a `float` to a table at `o` into its vtable, with value `x` and default `d`.
      *
      * @param o The index into the vtable.
      * @param x A `float` to put into the buffer, depending on how defaults are handled. If
-     * `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
-     * default value, it can be skipped.
+     *          `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
+     *          default value, it can be skipped.
      * @param d A `float` default value to compare against when `force_defaults` is `false`.
      */
-    public void addFloat  (int o, float   x, double  d) { if(force_defaults || x != d) { addFloat  (x); slot(o); } }
+    public void addFloat(int o, float x, double d) throws Exception {
+        if (force_defaults || x != d) {
+            addFloat(x);
+            slot(o);
+        }
+    }
 
     /**
      * Add a `double` to a table at `o` into its vtable, with value `x` and default `d`.
      *
      * @param o The index into the vtable.
      * @param x A `double` to put into the buffer, depending on how defaults are handled. If
-     * `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
-     * default value, it can be skipped.
+     *          `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
+     *          default value, it can be skipped.
      * @param d A `double` default value to compare against when `force_defaults` is `false`.
      */
-    public void addDouble (int o, double  x, double  d) { if(force_defaults || x != d) { addDouble (x); slot(o); } }
+    public void addDouble(int o, double x, double d) throws Exception {
+        if (force_defaults || x != d) {
+            addDouble(x);
+            slot(o);
+        }
+    }
 
     /**
      * Add an `offset` to a table at `o` into its vtable, with value `x` and default `d`.
      *
      * @param o The index into the vtable.
      * @param x An `offset` to put into the buffer, depending on how defaults are handled. If
-     * `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
-     * default value, it can be skipped.
+     *          `force_defaults` is `false`, compare `x` against the default value `d`. If `x` contains the
+     *          default value, it can be skipped.
      * @param d An `offset` default value to compare against when `force_defaults` is `false`.
      */
-    public void addOffset (int o, int     x, int     d) { if(force_defaults || x != d) { addOffset (x); slot(o); } }
+    public void addOffset(int o, int x, int d) throws Exception {
+        if (force_defaults || x != d) {
+            addOffset(x);
+            slot(o);
+        }
+    }
 
     /**
      * Add a struct to the table. Structs are stored inline, so nothing additional is being added.
      *
      * @param voffset The index into the vtable.
-     * @param x The offset of the created struct.
-     * @param d The default value is always `0`.
+     * @param x       The offset of the created struct.
+     * @param d       The default value is always `0`.
      */
-    public void addStruct(int voffset, int x, int d) {
-        if(x != d) {
+    public void addStruct(int voffset, int x, int d) throws Exception {
+        if (x != d) {
             Nested(x);
             slot(voffset);
         }
@@ -661,33 +739,33 @@ public class FlatBufferBuilder {
      * Set the current vtable at `voffset` to the current location in the buffer.
      *
      * @param voffset The index into the vtable to store the offset relative to the end of the
-     * buffer.
+     *                buffer.
      */
     public void slot(int voffset) {
         vtable[voffset] = offset();
     }
 
-   /**
-    * Finish off writing the object that is under construction.
-    *
-    * @return The offset to the object inside {@link #dataBuffer()}.
-    * @see #startObject(int)
-    */
-    public int endObject() {
+    /**
+     * Finish off writing the object that is under construction.
+     *
+     * @return The offset to the object inside {@link #dataBuffer()}.
+     * @see #startObject(int)
+     */
+    public int endObject() throws Exception {
         if (vtable == null || !nested)
-            throw new AssertionError("FlatBuffers: endObject called without startObject");
+            throw new Exception("FlatBuffers: endObject called without startObject");
         addInt(0);
         int vtableloc = offset();
         // Write out the current vtable.
-        for (int i = vtable_in_use - 1; i >= 0 ; i--) {
+        for (int i = vtable_in_use - 1; i >= 0; i--) {
             // Offset relative to the start of the table.
-            short off = (short)(vtable[i] != 0 ? vtableloc - vtable[i] : 0);
+            short off = (short) (vtable[i] != 0 ? vtableloc - vtable[i] : 0);
             addShort(off);
         }
 
         final int standard_fields = 2; // The fields below:
-        addShort((short)(vtableloc - object_start));
-        addShort((short)((vtable_in_use + standard_fields) * SIZEOF_SHORT));
+        addShort((short) (vtableloc - object_start));
+        addShort((short) ((vtable_in_use + standard_fields) * SIZEOF_SHORT));
 
         // Search for an existing vtable that matches the current one.
         int existing_vtable = 0;
@@ -733,13 +811,13 @@ public class FlatBufferBuilder {
      * @param table The offset to the start of the table from the `ByteBuffer` capacity.
      * @param field The offset to the field in the vtable.
      */
-    public void required(int table, int field) {
+    public void required(int table, int field) throws Exception {
         int table_start = bb.capacity() - table;
         int vtable_start = table_start - bb.getInt(table_start);
         boolean ok = bb.getShort(vtable_start + field) != 0;
         // If this fails, the caller will show what field needs to be set.
         if (!ok)
-            throw new AssertionError("FlatBuffers: field " + field + " must be set");
+            throw new Exception("FlatBuffers: field " + field + " must be set");
     }
     /// @endcond
 
@@ -748,7 +826,7 @@ public class FlatBufferBuilder {
      *
      * @param root_table An offset to be added to the buffer.
      */
-    public void finish(int root_table) {
+    public void finish(int root_table) throws Exception {
         prep(minalign, SIZEOF_INT);
         addOffset(root_table);
         bb.position(space);
@@ -758,17 +836,17 @@ public class FlatBufferBuilder {
     /**
      * Finalize a buffer, pointing to the given `root_table`.
      *
-     * @param root_table An offset to be added to the buffer.
+     * @param root_table      An offset to be added to the buffer.
      * @param file_identifier A FlatBuffer file identifier to be added to the buffer before
-     * `root_table`.
+     *                        `root_table`.
      */
-    public void finish(int root_table, String file_identifier) {
+    public void finish(int root_table, String file_identifier) throws Exception {
         prep(minalign, SIZEOF_INT + FILE_IDENTIFIER_LENGTH);
         if (file_identifier.length() != FILE_IDENTIFIER_LENGTH)
-            throw new AssertionError("FlatBuffers: file identifier must be length " +
-                                     FILE_IDENTIFIER_LENGTH);
+            throw new Exception("FlatBuffers: file identifier must be length " +
+                    FILE_IDENTIFIER_LENGTH);
         for (int i = FILE_IDENTIFIER_LENGTH - 1; i >= 0; i--) {
-            addByte((byte)file_identifier.charAt(i));
+            addByte((byte) file_identifier.charAt(i));
         }
         finish(root_table);
     }
@@ -781,7 +859,7 @@ public class FlatBufferBuilder {
      * @param forceDefaults When set to `true`, always serializes default values.
      * @return Returns `this`.
      */
-    public FlatBufferBuilder forceDefaults(boolean forceDefaults){
+    public FlatBufferBuilder forceDefaults(boolean forceDefaults) {
         this.force_defaults = forceDefaults;
         return this;
     }
@@ -793,35 +871,35 @@ public class FlatBufferBuilder {
      *
      * @return The {@link ByteBuffer} representing the FlatBuffer
      */
-    public ByteBuffer dataBuffer() {
+    public ByteBuffer dataBuffer() throws Exception {
         finished();
         return bb;
     }
 
-   /**
-    * The FlatBuffer data doesn't start at offset 0 in the {@link ByteBuffer}, but
-    * now the {@code ByteBuffer}'s position is set to that location upon {@link #finish(int)}.
-    *
-    * @return The {@link ByteBuffer#position() position} the data starts in {@link #dataBuffer()}
-    * @deprecated This method should not be needed anymore, but is left
-    * here for the moment to document this API change. It will be removed in the future.
-    */
+    /**
+     * The FlatBuffer data doesn't start at offset 0 in the {@link ByteBuffer}, but
+     * now the {@code ByteBuffer}'s position is set to that location upon {@link #finish(int)}.
+     *
+     * @return The {@link ByteBuffer#position() position} the data starts in {@link #dataBuffer()}
+     * @deprecated This method should not be needed anymore, but is left
+     * here for the moment to document this API change. It will be removed in the future.
+     */
     @Deprecated
-    private int dataStart() {
+    private int dataStart() throws Exception {
         finished();
         return space;
     }
 
-   /**
-    * A utility function to copy and return the ByteBuffer data from `start` to
-    * `start` + `length` as a `byte[]`.
-    *
-    * @param start Start copying at this offset.
-    * @param length How many bytes to copy.
-    * @return A range copy of the {@link #dataBuffer() data buffer}.
-    * @throws IndexOutOfBoundsException If the range of bytes is ouf of bound.
-    */
-    public byte[] sizedByteArray(int start, int length){
+    /**
+     * A utility function to copy and return the ByteBuffer data from `start` to
+     * `start` + `length` as a `byte[]`.
+     *
+     * @param start  Start copying at this offset.
+     * @param length How many bytes to copy.
+     * @return A range copy of the {@link #dataBuffer() data buffer}.
+     * @throws IndexOutOfBoundsException If the range of bytes is ouf of bound.
+     */
+    public byte[] sizedByteArray(int start, int length) throws Exception {
         finished();
         byte[] array = new byte[length];
         bb.position(start);
@@ -829,12 +907,12 @@ public class FlatBufferBuilder {
         return array;
     }
 
-   /**
-    * A utility function to copy and return the ByteBuffer data as a `byte[]`.
-    *
-    * @return A full copy of the {@link #dataBuffer() data buffer}.
-    */
-    public byte[] sizedByteArray() {
+    /**
+     * A utility function to copy and return the ByteBuffer data as a `byte[]`.
+     *
+     * @return A full copy of the {@link #dataBuffer() data buffer}.
+     */
+    public byte[] sizedByteArray() throws Exception {
         return sizedByteArray(space, bb.capacity() - space);
     }
 }

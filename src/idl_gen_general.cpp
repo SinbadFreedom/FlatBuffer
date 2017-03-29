@@ -1117,7 +1117,12 @@ void GenStruct(StructDef &struct_def, std::string *code_ptr) {
     code += FunctionStart('C') + "reate";
     code += struct_def.name + "(FlatBufferBuilder builder";
     GenStructArgs(struct_def, code_ptr, "");
-    code += ") {\n";
+	if (lang_.language == IDLOptions::kJava) {
+		code += ") throws Exception {\n";
+	} else {
+		code += ") {\n";
+	}
+    
     GenStructBody(struct_def, code_ptr, "");
     code += "    return ";
     code += GenOffsetConstruct(struct_def,
@@ -1162,7 +1167,14 @@ void GenStruct(StructDef &struct_def, std::string *code_ptr) {
           code += GenDefaultValueBasic(field.value);
         }
       }
-      code += ") {\n    builder.";
+
+	  if (lang_.language == IDLOptions::kJava) {
+		  code += ") throws Exception {\n    builder.";
+	  }	  else {
+		  code += ") {\n    builder.";
+	  }
+      
+
       code += FunctionStart('S') + "tartObject(";
       code += NumToString(struct_def.fields.vec.size()) + ");\n";
       for (size_t size = struct_def.sortbysize ? sizeof(largest_scalar_t) : 1;
@@ -1193,7 +1205,13 @@ void GenStruct(StructDef &struct_def, std::string *code_ptr) {
     // Unlike the Create function, these always work.
     code += "  public static void " + FunctionStart('S') + "tart";
     code += struct_def.name;
-    code += "(FlatBufferBuilder builder) { builder.";
+	if (lang_.language == IDLOptions::kJava) {
+		code += "(FlatBufferBuilder builder) throws Exception { builder.";
+	} else {
+		code += "(FlatBufferBuilder builder) { builder.";
+	}
+	
+    
     code += FunctionStart('S') + "tartObject(";
     code += NumToString(struct_def.fields.vec.size()) + "); }\n";
     for (auto it = struct_def.fields.vec.begin();
@@ -1207,7 +1225,12 @@ void GenStruct(StructDef &struct_def, std::string *code_ptr) {
       code += GenTypeBasic(DestinationType(field.value.type, false));
       auto argname = MakeCamel(field.name, false);
       if (!IsScalar(field.value.type.base_type)) argname += "Offset";
-      code += " " + argname + ") { builder." + FunctionStart('A') + "dd";
+	  if (lang_.language == IDLOptions::kJava) {
+		  code += " " + argname + ") throws Exception { builder." + FunctionStart('A') + "dd";
+	  } else {
+		  code += " " + argname + ") { builder." + FunctionStart('A') + "dd";
+	  }
+      
       code += GenMethod(field.value.type) + "(";
       code += NumToString(it - struct_def.fields.vec.begin()) + ", ";
       code += SourceCastBasic(field.value.type);
@@ -1233,6 +1256,11 @@ void GenStruct(StructDef &struct_def, std::string *code_ptr) {
           code += MakeCamel(field.name);
           code += "Vector(FlatBufferBuilder builder, ";
           code += GenTypeBasic(vector_type) + "[] data) ";
+
+		  if (lang_.language == IDLOptions::kJava) {
+			  code += "throws Exception ";
+		  }
+
           code += "{ builder." + FunctionStart('S') + "tartVector(";
           code += NumToString(elem_size);
           code += ", data." + FunctionStart('L') + "ength, ";
@@ -1255,6 +1283,10 @@ void GenStruct(StructDef &struct_def, std::string *code_ptr) {
         code += "  public static void " + FunctionStart('S') + "tart";
         code += MakeCamel(field.name);
         code += "Vector(FlatBufferBuilder builder, int numElems) ";
+
+		if (lang_.language == IDLOptions::kJava) {
+			code += " throws Exception ";
+		}
         code += "{ builder." + FunctionStart('S') + "tartVector(";
         code += NumToString(elem_size);
         code += ", numElems, " + NumToString(alignment);
@@ -1263,7 +1295,11 @@ void GenStruct(StructDef &struct_def, std::string *code_ptr) {
     }
     code += "  public static " + GenOffsetType(struct_def) + " ";
     code += FunctionStart('E') + "nd" + struct_def.name;
-    code += "(FlatBufferBuilder builder) {\n    int o = builder.";
+	if (lang_.language == IDLOptions::kJava) {
+		code += "(FlatBufferBuilder builder) throws Exception {\n    int o = builder.";
+	} else {
+		code += "(FlatBufferBuilder builder) {\n    int o = builder.";
+	}
     code += FunctionStart('E') + "ndObject();\n";
     for (auto it = struct_def.fields.vec.begin();
          it != struct_def.fields.vec.end();
@@ -1280,7 +1316,12 @@ void GenStruct(StructDef &struct_def, std::string *code_ptr) {
       code += "  public static void ";
       code += FunctionStart('F') + "inish" + struct_def.name;
       code += "Buffer(FlatBufferBuilder builder, " + GenOffsetType(struct_def);
-      code += " offset) {";
+	  if (lang_.language == IDLOptions::kJava) {
+		  code += " offset) throws Exception {";
+	  }	else {
+		  code += " offset) {";
+	  }
+	  
       code += " builder." + FunctionStart('F') + "inish(offset";
       if (lang_.language == IDLOptions::kCSharp) {
         code += ".Value";
